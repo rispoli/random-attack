@@ -1,0 +1,187 @@
+#define unknown -1
+#define undefined 0
+
+#define N 2 /* number of processes */
+#define r 6
+
+#define KEY_MIN 1
+#define KEY_MAX r
+
+#define MAX_SHORT 2 ^ 15 - 1
+
+typedef message {
+	short level[N];
+	short val[N];
+	int key;
+};
+
+chan incoming[N] = [0] of {message};
+
+proctype G(byte i; bit initial_value) {
+
+	/* B: internal state initialization */
+
+	byte rounds = 0;
+	int decision = unknown;
+
+	message internal_state;
+
+	byte j = 0;
+
+	do
+	:: j < N ->
+		internal_state.val[j] = undefined;
+		internal_state.level[j] = -1;
+		j++
+	:: j == N -> break
+	od;
+	internal_state.val[i] = initial_value;
+	internal_state.level[i] = 0;
+	internal_state.key = undefined;
+
+	/* E: internal state initialization */
+
+	/* B: randomly choose a key, if needed */
+
+	if
+	:: (i == 0 && rounds == 0) ->
+		do
+		:: internal_state.key < KEY_MAX -> internal_state.key++
+		:: internal_state.key > KEY_MIN -> internal_state.key--
+		:: internal_state.key != undefined -> break
+		od;
+		printf("key = %d\n", internal_state.key);
+	:: else -> skip
+	fi;
+
+	/* E: randomly choose a key, if needed */
+
+	do
+	:: rounds < r ->
+
+		message incoming_message;
+
+		byte sent;
+		sent = 0;
+
+		do
+		:: sent < N ->
+
+			/* B: send my state to everyone else */
+
+			if
+			:: sent != i ->
+				if
+				:: incoming[sent]!internal_state
+				:: skip
+				fi
+			:: else -> skip
+			fi;
+			sent++
+
+			/* E: send my state to everyone else */
+
+		:: timeout -> goto timed_out
+		:: incoming[i]?incoming_message ->
+
+			/* B: overwrite the key with the right value, if possible */
+
+			if
+			:: incoming_message.key != undefined -> internal_state.key = incoming_message.key
+			:: else -> skip
+			fi;
+
+			/* E: overwrite the key with the right value, if possible */
+
+			/* B: update level and value of other processes within internal state, if possible */
+
+			j = 0;
+			do
+			:: j == i ->
+				j++
+			:: j < N && j != i ->
+				if
+				:: incoming_message.val[j] != undefined ->
+					internal_state.val[j] = incoming_message.val[j]
+				:: else -> skip
+				fi;
+				if
+				:: incoming_message.level[j] > internal_state.level[j] ->
+					internal_state.level[j] = incoming_message.level[j]
+				:: else -> skip
+				fi;
+				j++
+			:: j == N -> break
+			od;
+
+			/* E: update level and value of other processes within internal state, if possible */
+
+		od;
+		timed_out:
+
+		/* B: update my level */
+
+		j = 0;
+		short min_level;
+		min_level = MAX_SHORT;
+		do
+		:: j == i ->
+			j++
+		:: j < N && j != i ->
+			if
+			:: internal_state.level[j] < min_level -> min_level = internal_state.level[j]
+			:: else -> skip
+			fi;
+			j++
+		:: j == N -> break
+		od;
+		internal_state.level[i] = min_level + 1;
+
+		/* E: update my level */
+
+		rounds++
+	:: rounds == r -> goto take_decision
+	od;
+
+
+	if
+	:: rounds == r ->
+	take_decision:
+		if
+		:: internal_state.key != undefined && internal_state.level[i] >= internal_state.key ->
+			j = 0;
+			do
+			:: j < N ->
+				if
+				:: internal_state.val[j] == 1 -> decision = 1
+				:: else -> decision = 0; break
+				fi;
+				j++
+			:: j == N -> break
+			od
+		:: else -> decision = 0
+		fi
+	:: else -> goto end
+	fi;
+
+	printf("Process %d decides %d\n", i, decision);
+
+end:
+	skip
+}
+
+
+init {
+	printf("# of processes: %d\n", N);
+	printf("rounds: %d\n", r);
+	byte proc;
+	atomic {
+		proc = 0;
+		do
+		:: proc < N ->
+			run G (proc, 1);
+			proc++
+		:: proc == N -> break
+		od
+	}
+}
